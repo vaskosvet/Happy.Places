@@ -18,7 +18,12 @@ import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.example.happyplaces.R
+import com.example.happyplaces.activities.MainActivity
 import com.example.happyplaces.models.HappyPlaceModel
+import com.google.android.libraries.places.api.Places
+import com.google.android.libraries.places.api.model.Place
+import com.google.android.libraries.places.widget.Autocomplete
+import com.google.android.libraries.places.widget.model.AutocompleteActivityMode
 import com.happyplaces.database.DatabaseHandler
 import com.karumi.dexter.Dexter
 import com.karumi.dexter.MultiplePermissionsReport
@@ -35,41 +40,43 @@ import java.util.*
 
 class AddHappyPlaceActivity : AppCompatActivity(), View.OnClickListener {
 
-    /**
-     * An variable to get an instance calendar using the default time zone and locale.
-     */
+
     private var cal = Calendar.getInstance()
 
-    /**
-     * A variable for DatePickerDialog OnDateSetListener.
-     * The listener used to indicate the user has finished selecting a date. Which we will be initialize later on.
-     */
     private lateinit var dateSetListener: DatePickerDialog.OnDateSetListener
-
     private var saveImageToInternalStorage: Uri? = null
+    private var mLatitude: Double = 0.0
+    private var mLongitude: Double = 0.0
+    private var mHappyPlaceDetails: HappyPlaceModel? = null
 
-    private var mLatitude: Double = 0.0 // A variable which will hold the latitude value.
-    private var mLongitude: Double = 0.0 // A variable which will hold the longitude value.
 
-    /**
-     * This function is auto created by Android when the Activity Class is created.
-     */
     override fun onCreate(savedInstanceState: Bundle?) {
-        //This call the parent constructor
+
         super.onCreate(savedInstanceState)
 
-        // This is used to align the xml view to this class
         setContentView(R.layout.activity_add_happy_place)
 
-        setSupportActionBar(toolbar_add_place) // Use the toolbar to set the action bar.
-        supportActionBar?.setDisplayHomeAsUpEnabled(true) // This is to use the home back button.
-        // Setting the click event to the back button
+        setSupportActionBar(toolbar_add_place)
+        supportActionBar?.setDisplayHomeAsUpEnabled(true)
+
         toolbar_add_place.setNavigationOnClickListener {
             onBackPressed()
         }
 
-        // https://www.tutorialkart.com/kotlin-android/android-datepicker-kotlin-example/
-        // create an OnDateSetListener
+        if (!Places.isInitialized()) {
+            Places.initialize(
+                this@AddHappyPlaceActivity,
+                resources.getString(R.string.google_maps_api_key)
+            )
+        }
+
+
+        if (intent.hasExtra(MainActivity.EXTRA_PLACE_DETAILS)) {
+            mHappyPlaceDetails =
+                intent.getParcelableExtra(MainActivity.EXTRA_PLACE_DETAILS) as HappyPlaceModel?
+        }
+
+
         dateSetListener =
             DatePickerDialog.OnDateSetListener { view, year, monthOfYear, dayOfMonth ->
                 cal.set(Calendar.YEAR, year)
@@ -79,14 +86,30 @@ class AddHappyPlaceActivity : AppCompatActivity(), View.OnClickListener {
                 updateDateInView()
             }
 
-        // TODO (Step 2 : Here instead of validating the date we can set the current date to the view and user can change if needed.)
-        // START
-        updateDateInView() // Here the calender instance what we have created before will give us the current date which is formatted in the format in function
-        // END
 
+        updateDateInView()
+
+        if (mHappyPlaceDetails != null) {
+            supportActionBar?.title = "Edit Happy Place"
+
+            et_title.setText(mHappyPlaceDetails!!.title)
+            et_description.setText(mHappyPlaceDetails!!.description)
+            et_date.setText(mHappyPlaceDetails!!.date)
+            et_location.setText(mHappyPlaceDetails!!.location)
+            mLatitude = mHappyPlaceDetails!!.latitude
+            mLongitude = mHappyPlaceDetails!!.longitude
+
+            saveImageToInternalStorage = Uri.parse(mHappyPlaceDetails!!.image)
+
+            iv_place_image.setImageURI(saveImageToInternalStorage)
+
+            btn_save.text = "UPDATE"
+
+        }
         et_date.setOnClickListener(this)
         tv_add_image.setOnClickListener(this)
         btn_save.setOnClickListener(this)
+        et_location.setOnClickListener(this)
     }
 
     override fun onClick(v: View?) {
@@ -94,9 +117,8 @@ class AddHappyPlaceActivity : AppCompatActivity(), View.OnClickListener {
             R.id.et_date -> {
                 DatePickerDialog(
                     this@AddHappyPlaceActivity,
-                    dateSetListener, // This is the variable which have created globally and initialized in setupUI method.
-                    // set DatePickerDialog to point to today's date when it loads up
-                    cal.get(Calendar.YEAR), // Here the cal instance is created globally and used everywhere in the class where it is required.
+                    dateSetListener,
+                    cal.get(Calendar.YEAR),
                     cal.get(Calendar.MONTH),
                     cal.get(Calendar.DAY_OF_MONTH)
                 ).show()
@@ -111,7 +133,7 @@ class AddHappyPlaceActivity : AppCompatActivity(), View.OnClickListener {
                     pictureDialogItems
                 ) { dialog, which ->
                     when (which) {
-                        // Here we have create the methods for image selection from GALLERY
+
                         0 -> choosePhotoFromGallery()
                         1 -> takePhotoFromCamera()
                     }
@@ -119,8 +141,7 @@ class AddHappyPlaceActivity : AppCompatActivity(), View.OnClickListener {
                 pictureDialog.show()
             }
 
-            // TODO (Step 1 : Performing a click event on btn_save. And validating and saving the details in the local database.)
-            // START
+
             R.id.btn_save -> {
 
                 when {
@@ -140,9 +161,9 @@ class AddHappyPlaceActivity : AppCompatActivity(), View.OnClickListener {
                     }
                     else -> {
 
-                        // Assigning all the values to data model class.
+
                         val happyPlaceModel = HappyPlaceModel(
-                            0,
+                            if (mHappyPlaceDetails == null) 0 else mHappyPlaceDetails!!.id,
                             et_title.text.toString(),
                             saveImageToInternalStorage.toString(),
                             et_description.text.toString(),
@@ -152,19 +173,43 @@ class AddHappyPlaceActivity : AppCompatActivity(), View.OnClickListener {
                             mLongitude
                         )
 
-                        // Here we initialize the database handler class.
                         val dbHandler = DatabaseHandler(this)
 
-                        val addHappyPlace = dbHandler.addHappyPlace(happyPlaceModel)
+                        if (mHappyPlaceDetails == null) {
+                            val addHappyPlace = dbHandler.addHappyPlace(happyPlaceModel)
+                            if (addHappyPlace > 0) {
+                                setResult(Activity.RESULT_OK)
+                                finish()
+                            }
+                        } else {
+                            val updateHappyPlace = dbHandler.updateHappyPlace(happyPlaceModel)
+                            if (updateHappyPlace > 0) {
+                                setResult(Activity.RESULT_OK)
+                                finish()
+                            }
 
-                        if (addHappyPlace > 0) {
-                            setResult(Activity.RESULT_OK)
-                            finish();//finishing activity
                         }
                     }
                 }
+
             }
-            // END
+            R.id.et_location -> {
+                try {
+                    val fields = listOf(
+                        Place.Field.ID,
+                        Place.Field.NAME,
+                        Place.Field.LAT_LNG,
+                        Place.Field.ADDRESS
+                    )
+
+                    val intent =
+                        Autocomplete.IntentBuilder(AutocompleteActivityMode.FULLSCREEN, fields)
+                            .build(this@AddHappyPlaceActivity)
+                    startActivityForResult(intent, PLACE_AUTOCOMPLETE_REQUEST_CODE)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
         }
     }
 
@@ -201,13 +246,18 @@ class AddHappyPlaceActivity : AppCompatActivity(), View.OnClickListener {
                         iv_place_image!!.setImageBitmap(selectedImageBitmap) // Set the selected image from GALLERY to imageView.
                     } catch (e: IOException) {
                         e.printStackTrace()
-                        Toast.makeText(this@AddHappyPlaceActivity, "Failed!", Toast.LENGTH_SHORT)
+                        Toast.makeText(
+                            this@AddHappyPlaceActivity,
+                            "Failed!",
+                            Toast.LENGTH_SHORT
+                        )
                             .show()
                     }
                 }
             } else if (requestCode == CAMERA) {
 
-                val thumbnail: Bitmap = data!!.extras!!.get("data") as Bitmap // Bitmap from camera
+                val thumbnail: Bitmap =
+                    data!!.extras!!.get("data") as Bitmap // Bitmap from camera
 
                 saveImageToInternalStorage =
                     saveImageToInternalStorage(thumbnail)
@@ -217,6 +267,11 @@ class AddHappyPlaceActivity : AppCompatActivity(), View.OnClickListener {
             }
         } else if (resultCode == Activity.RESULT_CANCELED) {
             Log.e("Cancelled", "Cancelled")
+        } else if (requestCode == PLACE_AUTOCOMPLETE_REQUEST_CODE) {
+            val place: Place = Autocomplete.getPlaceFromIntent(data!!)
+            et_location.setText(place.address)
+            mLatitude = place.latLng!!.latitude
+            mLongitude = place.latLng!!.longitude
         }
     }
 
@@ -365,5 +420,6 @@ class AddHappyPlaceActivity : AppCompatActivity(), View.OnClickListener {
         private const val GALLERY = 1
         private const val CAMERA = 2
         private const val IMAGE_DIRECTORY = "HappyPlacesImages"
+        private const val PLACE_AUTOCOMPLETE_REQUEST_CODE = 3
     }
 }
